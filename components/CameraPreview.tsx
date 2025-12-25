@@ -178,19 +178,101 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({ config }) => {
     };
 
     hands.onResults(onResults);
-    const camera = new (window as any).Camera(videoElement, {
-      onFrame: async () => {
-        if (!active) return;
-        try { await hands.send({ image: videoElement }); } catch (e) {}
-      },
-      width: 1280, height: 720
+    
+    // 检查浏览器是否支持 getUserMedia
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      console.error('浏览器不支持 getUserMedia');
+      alert('您的浏览器不支持摄像头访问。\n\n请确保：\n1. 使用现代浏览器（Chrome、Firefox、Edge）\n2. 使用 HTTPS 或 localhost 访问\n3. 如果使用 IP 地址，请切换到 HTTPS');
+      return;
+    }
+
+    let camera: any;
+    
+    // 先手动获取摄像头流
+    navigator.mediaDevices.getUserMedia({
+      video: { 
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        facingMode: 'user'
+      }
+    }).then((mediaStream) => {
+      if (!active) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      
+      stream = mediaStream;
+      videoElement.srcObject = mediaStream;
+      videoElement.play().catch((e) => {
+        console.error('视频播放失败:', e);
+      });
+
+      // 然后创建 MediaPipe Camera 工具
+      try {
+        camera = new (window as any).Camera(videoElement, {
+          onFrame: async () => {
+            if (!active) return;
+            try { 
+              await hands.send({ image: videoElement }); 
+            } catch (e) {
+              console.warn('Hands processing error:', e);
+            }
+          },
+          width: 1280, 
+          height: 720
+        });
+        
+        if (camera && typeof camera.start === 'function') {
+          camera.start().catch((error: Error) => {
+            console.error('MediaPipe Camera 启动失败:', error);
+          });
+        }
+      } catch (error: any) {
+        console.error('创建 Camera 对象失败:', error);
+        // 如果 MediaPipe Camera 失败，尝试手动处理视频流
+        const processFrame = () => {
+          if (!active || videoElement.readyState !== videoElement.HAVE_ENOUGH_DATA) {
+            requestAnimationFrame(processFrame);
+            return;
+          }
+          try {
+            hands.send({ image: videoElement }).catch((e) => {
+              console.warn('Hands send error:', e);
+            });
+          } catch (e) {
+            console.warn('Frame processing error:', e);
+          }
+          requestAnimationFrame(processFrame);
+        };
+        processFrame();
+      }
+    }).catch((error: Error) => {
+      console.error('获取摄像头权限失败:', error);
+      alert(`摄像头访问失败: ${error.message}\n\n可能的原因：\n1. 需要使用 HTTPS 或 localhost\n2. 需要允许摄像头权限\n3. 摄像头被其他应用占用\n\n如果使用 IP 地址访问，请切换到 HTTPS 或使用 localhost`);
     });
-    camera.start();
 
     return () => {
       active = false;
-      camera.stop();
-      hands.close();
+      try {
+        // 停止视频流
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+          stream = null;
+        }
+        if (videoElement.srcObject) {
+          videoElement.srcObject = null;
+        }
+        // 停止 MediaPipe Camera
+        if (camera && typeof camera.stop === 'function') {
+          camera.stop();
+        }
+        // 关闭 Hands
+        if (hands && typeof hands.close === 'function') {
+          hands.close();
+        }
+      } catch (e) {
+        console.warn('清理资源时出错:', e);
+      }
     };
   }, [config.isRunning, config.color, config.size, JSON.stringify(config.poses)]);
 
