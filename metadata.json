@@ -1,0 +1,7 @@
+{
+  "name": "AI Magic Coding Class",
+  "description": "A kid-friendly Python experience where writing 10 lines of code enables AI-powered 'Air Writing' with gestures.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
